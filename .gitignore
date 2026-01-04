@@ -1,0 +1,40 @@
+# Compiled binaries
+f1sim
+*.o
+*.out
+*.exe
+
+# Build artifacts
+*.a
+*.so
+*.dylib
+
+# Debug files
+*.dSYM/
+*.su
+*.idb
+*.pdb
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Copilot instructions (local only)
+.github/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Profiling data
+*.prof
+*.log
+perf.data*
+callgrind.out*
+
+# Test outputs
+test_results/
+coverage/
