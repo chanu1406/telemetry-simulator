@@ -1,11 +1,12 @@
 #pragma once
 
 #include "telemetry_data.h"
-#include "shared_state.h"
+#include "ring_buffer.h"
 #include <random>
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <atomic>
 
 namespace f1sim {
 
@@ -29,8 +30,12 @@ constexpr float BASE_SPEED_KMH = 200.0f;     // Simple constant speed for now
 
 class RaceEngine {
 public:
-    RaceEngine(SharedRaceState& shared_state, uint32_t seed, uint16_t total_laps)
-        : shared_state_(shared_state)
+    RaceEngine(RingBuffer<TelemetryFrame>& ring_buffer, 
+               std::atomic<bool>& stop_flag,
+               uint32_t seed, 
+               uint16_t total_laps)
+        : ring_buffer_(ring_buffer)
+        , stop_flag_(stop_flag)
         , rng_(seed)
         , total_laps_(total_laps)
         , tick_count_(0)
@@ -47,15 +52,22 @@ public:
             std::chrono::duration<double>(DT)
         );
 
-        while (!shared_state_.should_stop()) {
-            // TODO: Add proper physics update
+        while (!stop_flag_.load(std::memory_order_acquire)) {
+            // Update simulation
             update_simulation();
             
-            // Publish state to consumer
-            shared_state_.write_state(state_);
+            // Push telemetry frames for each car to the ring buffer
+            for (size_t i = 0; i < NUM_DRIVERS; ++i) {
+                TelemetryFrame frame = create_frame(i);
+                if (!ring_buffer_.push(frame)) {
+                    // Ring buffer shutdown, exit
+                    return;
+                }
+            }
             
             // Check if race is complete
             if (is_race_complete()) {
+                stop_flag_.store(true, std::memory_order_release);
                 break;
             }
             
@@ -78,9 +90,34 @@ private:
             car.position = static_cast<uint8_t>(i + 1);
             car.current_lap = 1;
             car.speed = 0.0f;
-            
-            // TODO: Initialize more fields as you add them
         }
+    }
+    
+    TelemetryFrame create_frame(size_t car_idx) const {
+        const auto& car = state_.cars[car_idx];
+        
+        TelemetryFrame frame{};
+        frame.timestamp_ms = static_cast<uint32_t>(state_.race_time * 1000.0f);
+        frame.driver_id = static_cast<uint8_t>(car_idx);
+        frame.position = car.position;
+        frame.lap = car.current_lap;
+        frame.sector = calculate_sector(car.distance, car.current_lap);
+        frame.speed = car.speed;
+        frame.distance = car.distance;
+        frame.throttle = 1.0f;  // Full throttle for now
+        frame.tire_wear = 0.0f;  // No wear yet
+        frame.flags = 0;  // No special flags
+        
+        return frame;
+    }
+    
+    uint8_t calculate_sector(float distance, uint16_t lap) const {
+        float lap_distance = distance - (TRACK_LENGTH * (lap - 1));
+        float sector_length = TRACK_LENGTH / 3.0f;
+        
+        if (lap_distance < sector_length) return 0;
+        if (lap_distance < sector_length * 2.0f) return 1;
+        return 2;
     }
 
     void update_simulation() {
@@ -145,12 +182,18 @@ private:
     }
 
     bool is_race_complete() const {
-        // Race complete when leader finishes target laps
-        return state_.cars[0].position == 1 && state_.cars[0].current_lap > total_laps_;
+        // Race complete when leader completes the final lap (starts lap total_laps + 1)
+        for (const auto& car : state_.cars) {
+            if (car.position == 1 && car.current_lap > total_laps_) {
+                return true;
+            }
+        }
+        return false;
     }
 
 private:
-    SharedRaceState& shared_state_;
+    RingBuffer<TelemetryFrame>& ring_buffer_;
+    std::atomic<bool>& stop_flag_;
     RaceState state_;
     std::mt19937 rng_;  // For deterministic randomness
     uint16_t total_laps_;

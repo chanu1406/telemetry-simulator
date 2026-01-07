@@ -1,11 +1,12 @@
 #include "race_engine.h"
 #include "telemetry_ui.h"
-#include "shared_state.h"
+#include "ring_buffer.h"
 #include <iostream>
 #include <thread>
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 
 using namespace f1sim;
 
@@ -13,12 +14,14 @@ using namespace f1sim;
 // Global state for signal handling
 // ============================================================================
 
-static SharedRaceState* g_shared_state = nullptr;
+static std::atomic<bool>* g_stop_flag = nullptr;
+static RingBuffer<TelemetryFrame>* g_ring_buffer = nullptr;
 
 void signal_handler(int signal) {
-    if (signal == SIGINT && g_shared_state) {
+    if (signal == SIGINT && g_stop_flag && g_ring_buffer) {
         std::cout << "\n\nShutting down gracefully...\n";
-        g_shared_state->signal_stop();
+        g_stop_flag->store(true, std::memory_order_release);
+        g_ring_buffer->shutdown();
     }
 }
 
@@ -107,16 +110,19 @@ int main(int argc, char* argv[]) {
     std::cout << "Starting simulation in 2 seconds...\n";
     std::this_thread::sleep_for(std::chrono::seconds(2));
     
-    // Create shared state
-    SharedRaceState shared_state;
-    g_shared_state = &shared_state;
+    // Create ring buffer and stop flag
+    RingBuffer<TelemetryFrame> ring_buffer;
+    std::atomic<bool> stop_flag{false};
+    
+    g_ring_buffer = &ring_buffer;
+    g_stop_flag = &stop_flag;
     
     // Setup signal handler for graceful shutdown
     std::signal(SIGINT, signal_handler);
     
     // Create engine and UI
-    RaceEngine engine(shared_state, config.seed, config.laps);
-    TelemetryUI ui(shared_state);
+    RaceEngine engine(ring_buffer, stop_flag, config.seed, config.laps);
+    TelemetryUI ui(ring_buffer, stop_flag);
     
     // Launch threads
     std::thread producer_thread([&engine]() {
@@ -130,8 +136,8 @@ int main(int argc, char* argv[]) {
     // Wait for threads to complete
     producer_thread.join();
     
-    // Signal consumer to stop
-    shared_state.signal_stop();
+    // Ensure ring buffer is shut down and consumer wakes up
+    ring_buffer.shutdown();
     consumer_thread.join();
     
     // Cleanup
