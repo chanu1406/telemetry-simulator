@@ -6,11 +6,41 @@
 namespace f1sim {
 
 // ============================================================================
+// Driver & Car Profiles
+// ============================================================================
+
+/**
+ * @brief Driver behavioral characteristics
+ * 
+ * All values in range [0.0, 1.0]
+ */
+struct DriverProfile {
+    float aggression;        // Affects tire wear rate (0.0 = smooth, 1.0 = aggressive)
+    float consistency;       // Affects lap time variance and skill factor (0.0 = erratic, 1.0 = consistent)
+    float tire_management;   // Resistance to tire degradation (0.0 = poor, 1.0 = excellent)
+    float risk_tolerance;    // Willingness to push limits (0.0 = conservative, 1.0 = risky)
+};
+
+/**
+ * @brief Car performance characteristics
+ * 
+ * All values in range [0.0, 1.0] representing relative performance
+ */
+struct CarProfile {
+    float engine_power;        // Top speed capability (0.0 = slowest, 1.0 = fastest)
+    float aero_efficiency;     // Cornering and downforce (0.0 = poor, 1.0 = excellent)
+    float cooling_efficiency;  // Tire temperature stability (0.0 = poor, 1.0 = excellent)
+    float reliability;         // Affects pit stop duration and failure probability (0.0 = unreliable, 1.0 = bulletproof)
+};
+
+// ============================================================================
 // Constants
 // ============================================================================
 
 constexpr size_t NUM_DRIVERS = 20;
-constexpr float TRACK_LENGTH = 5000.0f;  // meters
+constexpr float TRACK_LENGTH = 5000.0f;  // meters  
+constexpr float TIRE_WEAR_BASE_RATE = 0.00125f;  // Base wear per second (~7.5% per lap, 1-2 stops per race)
+constexpr float PIT_STOP_BASE_DURATION = 2.5f; // Base pit stop duration (seconds)
 
 // ============================================================================
 // Core Telemetry Data
@@ -71,8 +101,22 @@ struct CarTelemetry {
     uint8_t padding[53];      // Pad to 64 bytes total (4+4+1+2+53=64)
 } __attribute__((aligned(64)));
 
+/**
+ * @brief Extended car state with profile information
+ */
+struct CarState {
+    CarTelemetry telemetry;   // Current telemetry data
+    float tire_wear;          // Current tire wear (0.0 = fresh, 1.0 = worn out)
+    float pit_threshold;      // When to pit (computed from driver profile)
+    bool in_pits;             // Currently in pit stop
+    float pit_timer;          // Time remaining in pit stop (seconds)
+    uint8_t pit_stops;        // Number of pit stops completed
+};
+
 struct RaceState {
-    std::array<CarTelemetry, NUM_DRIVERS> cars;
+    std::array<CarState, NUM_DRIVERS> cars;
+    std::array<DriverProfile, NUM_DRIVERS> driver_profiles;
+    std::array<CarProfile, NUM_DRIVERS> car_profiles;
     uint64_t tick_count;
     float race_time;          // seconds
 };

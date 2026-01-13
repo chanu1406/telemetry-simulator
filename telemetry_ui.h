@@ -75,7 +75,7 @@ private:
         
         if (!leader) return;
         
-        // Simple console output (TODO: Make this fancier!)
+        // Simple console output with debug info
         std::cout << "\r";  // Carriage return (same line)
         std::cout << "Time: " << std::fixed << std::setprecision(1) 
                   << (leader->timestamp_ms / 1000.0f) << "s  ";
@@ -83,7 +83,13 @@ private:
                   << " (ID:" << static_cast<int>(leader->driver_id) << ") "
                   << "Speed: " << std::setw(3) << static_cast<int>(leader->speed) << " km/h  "
                   << "Lap: " << leader->lap 
-                  << " Sector: " << static_cast<int>(leader->sector);
+                  << " Sector: " << static_cast<int>(leader->sector)
+                  << " Dist: " << std::setprecision(0) << leader->distance << "m  "
+                  << "Tire: " << std::setprecision(0) << leader->tire_wear << "%";
+        
+        if (leader->flags & FLAG_IN_PITS) {
+            std::cout << " [IN PITS]";
+        }
         
         if (fastest) {
             std::cout << "  [D19: Lap " << fastest->lap << "]";
