@@ -1,9 +1,11 @@
 #pragma once
 
 #include "telemetry_data.h"
+#include "season_data.h"
 #include "ring_buffer.h"
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 #include <algorithm>
 #include <array>
 #include <thread>
@@ -139,6 +141,9 @@ private:
     }
     
     void render_driver_row(const TelemetryFrame* frame, size_t index) {
+        // Get driver info for name and team color
+        const auto& driver_info = DRIVER_ROSTER[frame->driver_id];
+        
         // Position indicator with medal emojis for podium
         std::string position_icon;
         const char* position_color = ANSIColor::WHITE;
@@ -161,30 +166,86 @@ private:
                   << "P" << std::setfill(' ') << std::setw(2) << static_cast<int>(frame->position) 
                   << ANSIColor::RESET << "  ";
         
-        // Driver name/ID
-        std::cout << "Driver " << std::setw(2) << static_cast<int>(frame->driver_id) << "  ";
+        // Driver name with team color
+        std::cout << driver_info.team_color << ANSIColor::BOLD 
+                  << std::setw(14) << std::left << driver_info.name 
+                  << ANSIColor::RESET << " ";
         
-        // Progress bar (10 characters) showing lap completion
-        float lap_progress = calculate_lap_progress(frame);
-        std::cout << render_progress_bar(lap_progress, 10) << "  ";
+        // Pit indicator or progress bar
+        if (frame->flags & FLAG_IN_PITS) {
+            // Show pit stop status
+            std::cout << ANSIColor::BRIGHT_YELLOW << "🔧 [IN PITS "
+                      << std::fixed << std::setprecision(1) << frame->pit_timer 
+                      << "s] " << ANSIColor::RESET;
+        } else {
+            // Progress bar (10 characters) showing lap completion
+            float lap_progress = calculate_lap_progress(frame);
+            std::cout << render_progress_bar(lap_progress, 10) << " ";
+        }
         
         // Lap number
-        std::cout << ANSIColor::CYAN << "Lap " << std::setw(2) << frame->lap << ANSIColor::RESET << "   ";
+        std::cout << ANSIColor::CYAN << "Lap " << std::setw(2) << frame->lap << ANSIColor::RESET << "  ";
+        
+        // Gap to leader (or "LEADER" for P1)
+        if (frame->position == 1) {
+            std::cout << ANSIColor::BRIGHT_GREEN << "LEADER    " << ANSIColor::RESET;
+        } else {
+            const char* gap_color = frame->gap_to_leader < 5.0f ? ANSIColor::BRIGHT_YELLOW : ANSIColor::WHITE;
+            std::cout << gap_color << "+" << std::fixed << std::setprecision(3) 
+                      << std::setw(6) << frame->gap_to_leader << "s" << ANSIColor::RESET << " ";
+        }
         
         // Speed (color-coded: green=fast, yellow=medium, red=slow)
         const char* speed_color = get_speed_color(frame->speed);
-        std::cout << speed_color << "Speed: " << std::setw(3) << static_cast<int>(frame->speed) 
-                  << " km/h" << ANSIColor::RESET << "   ";
+        std::cout << speed_color << std::setw(3) << static_cast<int>(frame->speed) 
+                  << " km/h" << ANSIColor::RESET << "  ";
         
         // Tire wear (color-coded: green=fresh, yellow=worn, red=critical)
         const char* tire_color = get_tire_color(frame->tire_wear);
         std::cout << tire_color << "Tire: " << std::setw(2) << static_cast<int>(frame->tire_wear) 
                   << "%" << ANSIColor::RESET;
         
-        // Pit stop indicator
-        if (frame->flags & FLAG_IN_PITS) {
-            std::cout << "  " << ANSIColor::MAGENTA << ANSIColor::BOLD 
-                      << "[IN PITS]" << ANSIColor::RESET;
+        // Pit stop count
+        if (frame->pit_stops > 0) {
+            std::cout << "  " << ANSIColor::MAGENTA << "Stops:" << frame->pit_stops << ANSIColor::RESET;
+        }
+        
+        // Sector times (show if lap > 1, as we need at least one sector completion)
+        if (frame->lap > 1 || frame->sector > 0) {
+            std::cout << "  " << ANSIColor::GRAY << "[";
+            
+            // S1
+            if (frame->sector_times[0] > 0) {
+                std::cout << "S1:" << format_sector_time(frame->sector_times[0]);
+            } else {
+                std::cout << "S1:--.-";
+            }
+            
+            std::cout << " ";
+            
+            // S2
+            if (frame->sector_times[1] > 0) {
+                std::cout << "S2:" << format_sector_time(frame->sector_times[1]);
+            } else {
+                std::cout << "S2:--.-";
+            }
+            
+            std::cout << " ";
+            
+            // S3
+            if (frame->sector_times[2] > 0) {
+                std::cout << "S3:" << format_sector_time(frame->sector_times[2]);
+            } else {
+                std::cout << "S3:--.-";
+            }
+            
+            std::cout << "]" << ANSIColor::RESET;
+        }
+        
+        // Last lap time (show if we've completed at least one lap)
+        if (frame->last_lap_time > 0) {
+            std::cout << "  " << ANSIColor::BRIGHT_CYAN << "⏱ " 
+                      << format_lap_time(frame->last_lap_time) << ANSIColor::RESET;
         }
         
         std::cout << "\n";
@@ -223,6 +284,27 @@ private:
         if (tire_wear < 30.0f) return ANSIColor::BRIGHT_GREEN;
         if (tire_wear < 60.0f) return ANSIColor::YELLOW;
         return ANSIColor::BRIGHT_RED;
+    }
+    
+    std::string format_sector_time(uint32_t time_ms) {
+        // Format: XX.X (e.g., 23.4)
+        float seconds = time_ms / 1000.0f;
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(1) << seconds;
+        return oss.str();
+    }
+    
+    std::string format_lap_time(uint32_t time_ms) {
+        // Format: M:SS.sss (e.g., 1:42.341)
+        int minutes = time_ms / 60000;
+        int seconds = (time_ms % 60000) / 1000;
+        int milliseconds = time_ms % 1000;
+        
+        std::ostringstream oss;
+        oss << minutes << ":" 
+            << std::setfill('0') << std::setw(2) << seconds << "."
+            << std::setfill('0') << std::setw(3) << milliseconds;
+        return oss.str();
     }
 
 private:

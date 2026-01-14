@@ -70,8 +70,19 @@ struct TelemetryFrame {
     // Tire Data (simplified for now)
     float tire_wear;          // 0.0 - 100.0% (4 bytes)
     
+    // Pit Stop Data
+    uint8_t pit_stops;        // Number of pit stops completed (1 byte)
+    float pit_timer;          // Time remaining in pit (seconds, 0 if not in pits) (4 bytes)
+    
+    // Gap Data
+    float gap_to_leader;      // Gap to P1 in seconds (negative if leader) (4 bytes)
+    
     // Status Flags (bitfield)
     uint8_t flags;            // IN_PITS=0x01, PENALTY=0x02, etc. (1 byte)
+    
+    // Sector & Lap Timing
+    uint32_t sector_times[3]; // S1, S2, S3 times in milliseconds (12 bytes)
+    uint32_t last_lap_time;   // Previous lap time in milliseconds (4 bytes)
     
     // TODO: Add more fields as needed:
     // - float brake;
@@ -79,7 +90,7 @@ struct TelemetryFrame {
     // - uint8_t gear;
     // - uint16_t engine_rpm;
     
-    uint8_t padding[32];      // Pad to 64 bytes (4+1+1+2+1+4+4+4+4+1+32+6=64)
+    uint8_t padding[3];       // Pad to 64 bytes (4+1+1+2+1+4+4+4+4+1+4+4+1+12+4+3=64)
 } __attribute__((aligned(64)));
 
 // Status flag constants
@@ -98,7 +109,8 @@ struct CarTelemetry {
     float distance;           // Total distance traveled in meters (4 bytes)
     uint8_t position;         // Race position (1-20) (1 byte)
     uint16_t current_lap;     // (2 bytes)
-    uint8_t padding[53];      // Pad to 64 bytes total (4+4+1+2+53=64)
+    float gap_to_leader;      // Gap to P1 in seconds (4 bytes)
+    uint8_t padding[49];      // Pad to 64 bytes total (4+4+1+2+4+49=64)
 } __attribute__((aligned(64)));
 
 /**

@@ -86,6 +86,15 @@ private:
         // Initialize driver and car profiles
         initialize_profiles();
         
+        // Initialize sector timing state
+        for (size_t i = 0; i < NUM_DRIVERS; ++i) {
+            last_sector_[i] = 0;  // Start in sector 0
+            sector_start_time_[i] = 0;  // Race starts at t=0
+            lap_start_time_[i] = 0;
+            current_sector_times_[i] = {0, 0, 0};
+            previous_lap_time_[i] = 0;
+        }
+        
         // Initialize each car with basic starting positions
         for (size_t i = 0; i < NUM_DRIVERS; ++i) {
             auto& car_state = state_.cars[i];
@@ -206,7 +215,16 @@ private:
         frame.distance = telemetry.distance;
         frame.throttle = car_state.in_pits ? 0.0f : 1.0f;  // No throttle in pits
         frame.tire_wear = car_state.tire_wear * 100.0f;  // Convert to percentage
+        frame.pit_stops = car_state.pit_stops;
+        frame.pit_timer = car_state.in_pits ? car_state.pit_timer : 0.0f;
+        frame.gap_to_leader = telemetry.gap_to_leader;
         frame.flags = car_state.in_pits ? FLAG_IN_PITS : 0;
+        
+        // Copy sector times and last lap time
+        frame.sector_times[0] = current_sector_times_[car_idx][0];
+        frame.sector_times[1] = current_sector_times_[car_idx][1];
+        frame.sector_times[2] = current_sector_times_[car_idx][2];
+        frame.last_lap_time = previous_lap_time_[car_idx];
         
         return frame;
     }
@@ -228,6 +246,7 @@ private:
         // Simple physics update for each car
         for (size_t i = 0; i < NUM_DRIVERS; ++i) {
             update_car_physics(i);
+            update_sector_timing(i);  // Track sector times
         }
         
         // Update race order
@@ -298,6 +317,35 @@ private:
         }
     }
 
+    void update_sector_timing(size_t idx) {
+        auto& telemetry = state_.cars[idx].telemetry;
+        uint8_t current_sector = calculate_sector(telemetry.distance, telemetry.current_lap);
+        uint32_t current_time_ms = static_cast<uint32_t>(state_.race_time * 1000.0f);
+        
+        // Check for sector change
+        if (current_sector != last_sector_[idx]) {
+            // Calculate time for the completed sector
+            uint32_t sector_time = current_time_ms - sector_start_time_[idx];
+            
+            // Store the completed sector time
+            current_sector_times_[idx][last_sector_[idx]] = sector_time;
+            
+            // Check if we completed sector 2 (which means we finished a lap)
+            if (last_sector_[idx] == 2 && current_sector == 0) {
+                // Lap completed - calculate total lap time
+                uint32_t lap_time = current_time_ms - lap_start_time_[idx];
+                previous_lap_time_[idx] = lap_time;
+                
+                // Reset for next lap
+                lap_start_time_[idx] = current_time_ms;
+            }
+            
+            // Move to next sector
+            last_sector_[idx] = current_sector;
+            sector_start_time_[idx] = current_time_ms;
+        }
+    }
+
     void update_race_order() {
         // Sort cars by distance traveled
         std::array<size_t, NUM_DRIVERS> indices;
@@ -309,10 +357,23 @@ private:
             return state_.cars[a].telemetry.distance > state_.cars[b].telemetry.distance;
         });
         
-        // Update positions
+        // Find leader's distance for gap calculations
+        float leader_distance = state_.cars[indices[0]].telemetry.distance;
+        
+        // Update positions and calculate gaps
         for (size_t i = 0; i < NUM_DRIVERS; ++i) {
             size_t car_idx = indices[i];
             state_.cars[car_idx].telemetry.position = static_cast<uint8_t>(i + 1);
+            
+            // Calculate gap to leader in seconds
+            // Gap = distance difference / average speed (in m/s)
+            float distance_diff = leader_distance - state_.cars[car_idx].telemetry.distance;
+            float avg_speed_ms = (state_.cars[car_idx].telemetry.speed / 3.6f);  // km/h to m/s
+            if (avg_speed_ms > 0.0f) {
+                state_.cars[car_idx].telemetry.gap_to_leader = distance_diff / avg_speed_ms;
+            } else {
+                state_.cars[car_idx].telemetry.gap_to_leader = 0.0f;
+            }
         }
     }
 
@@ -333,6 +394,13 @@ private:
     std::mt19937 rng_;  // For deterministic randomness
     uint16_t total_laps_;
     uint64_t tick_count_;
+    
+    // Sector timing state
+    std::array<uint8_t, NUM_DRIVERS> last_sector_;        // Track last sector for each driver
+    std::array<uint32_t, NUM_DRIVERS> sector_start_time_; // When current sector started (ms)
+    std::array<uint32_t, NUM_DRIVERS> lap_start_time_;    // When current lap started (ms)
+    std::array<std::array<uint32_t, 3>, NUM_DRIVERS> current_sector_times_;  // S1, S2, S3 for current lap
+    std::array<uint32_t, NUM_DRIVERS> previous_lap_time_; // Last completed lap time
 };
 
 } // namespace f1sim
